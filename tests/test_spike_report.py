@@ -10,12 +10,19 @@ from libsonata import SpikeReader
 
 import bluepysnap.spike_report as test_module
 from bluepysnap.bbp import Cell
-from bluepysnap.circuit_ids import CircuitNodeId, CircuitNodeIds
+from bluepysnap.circuit_ids import CircuitNodeIds
+from bluepysnap.circuit_ids_types import IDS_DTYPE, CircuitNodeId
 from bluepysnap.exceptions import BluepySnapError
 from bluepysnap.simulation import Simulation
-from bluepysnap.utils import IDS_DTYPE
 
 from utils import TEST_DATA_DIR, copy_test_data, edit_config
+
+try:
+    Output = libsonata._libsonata.Output
+except AttributeError:
+    from libsonata._libsonata import SimulationConfig
+
+    Output = SimulationConfig.Output
 
 
 def _create_series(node_ids, index, name="ids"):
@@ -34,7 +41,7 @@ class TestSpikeReport:
         self.test_obj = test_module.SpikeReport(self.simulation)
 
     def test_config(self):
-        assert isinstance(self.test_obj.config, libsonata._libsonata.Output)
+        assert isinstance(self.test_obj.config, Output)
         assert self.test_obj.config.output_dir == str(TEST_DATA_DIR / "reporting")
         assert self.test_obj.config.log_file == "log_spikes.log"
         assert self.test_obj.config.spikes_file == "spikes.h5"
@@ -107,6 +114,8 @@ class TestSpikeReport:
 
         filtered = self.test_obj.filter(group={"population": "default3"}, t_start=0.3, t_stop=0.6)
         assert len(filtered.report) == 0
+        assert set(filtered.report.columns) == {"ids", "population"}
+        assert filtered.report.index.name == "times"
 
         ids = CircuitNodeIds.from_arrays(["default", "default", "default2"], [0, 1, 2])
         filtered = self.test_obj.filter(group=ids)
@@ -151,9 +160,9 @@ class TestPopulationSpikeReport:
             test_obj.nodes
 
     def test__resolve_nodes(self):
-        npt.assert_array_equal(self.test_obj._resolve_nodes({Cell.MTYPE: "L6_Y"}), [1, 2])
-        assert self.test_obj._resolve_nodes({Cell.MTYPE: "L2_X"}) == [0]
-        npt.assert_array_equal(self.test_obj._resolve_nodes("Node12_L6_Y"), [1, 2])
+        npt.assert_array_equal(self.test_obj.resolve_nodes({Cell.MTYPE: "L6_Y"}), [1, 2])
+        assert self.test_obj.resolve_nodes({Cell.MTYPE: "L2_X"}) == [0]
+        npt.assert_array_equal(self.test_obj.resolve_nodes("Node12_L6_Y"), [1, 2])
 
     def test_get(self):
         tested = self.test_obj.get()
@@ -224,6 +233,12 @@ class TestPopulationSpikeReport:
             self.test_obj.get(group="Layer23"), _create_series([0, 0], [0.2, 1.3])
         )
 
+        # test that simulation node_set is used
+        pdt.assert_series_equal(
+            self.test_obj.get("only_exists_in_simulation"),
+            _create_series([2, 0, 2, 0], [0.1, 0.2, 0.7, 1.3]),
+        )
+
         # no 0.1, 0.7 from  ("default2", 2)
         ids = CircuitNodeIds.from_arrays(["default", "default", "default2"], [0, 1, 2])
         npt.assert_array_equal(self.test_obj.get(ids), _create_series([0, 1, 0], [0.2, 0.3, 1.3]))
@@ -252,16 +267,16 @@ class TestPopulationSpikeReport:
         )
 
     @patch(
-        test_module.__name__ + ".PopulationSpikeReport._resolve_nodes", return_value=np.asarray([4])
+        test_module.__name__ + ".PopulationSpikeReport.resolve_nodes", return_value=np.asarray([4])
     )
-    def test_get_not_in_report(self, mock):
+    def test_get_not_in_report(self, _):
         pdt.assert_series_equal(self.test_obj.get(4), _create_series([], []))
 
     @patch(
-        test_module.__name__ + ".PopulationSpikeReport._resolve_nodes",
+        test_module.__name__ + ".PopulationSpikeReport.resolve_nodes",
         return_value=np.asarray([0, 4]),
     )
-    def test_get_not_in_report(self, mock):
+    def test_get_not_in_report(self, _):
         pdt.assert_series_equal(self.test_obj.get([0, 4]), _create_series([0, 0], [0.2, 1.3]))
 
     def test_node_ids(self):

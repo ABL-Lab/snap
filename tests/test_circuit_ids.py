@@ -8,40 +8,14 @@ import pandas.testing as pdt
 import pytest
 
 import bluepysnap.circuit_ids as test_module
+from bluepysnap.circuit_ids_types import IDS_DTYPE, CircuitEdgeId, CircuitNodeId
 from bluepysnap.exceptions import BluepySnapError
-from bluepysnap.utils import IDS_DTYPE
 
 from utils import setup_tempdir
 
 
 def _multi_index():
     return pd.MultiIndex.from_arrays([["a", "a", "b", "a"], [0, 1, 0, 2]])
-
-
-class TestCircuitNodeId:
-    def setup_method(self):
-        self.test_obj = test_module.CircuitNodeId("pop", 1)
-
-    def test_init(self):
-        assert isinstance(self.test_obj, test_module.CircuitNodeId)
-        assert isinstance(self.test_obj, tuple)
-
-    def test_accessors(self):
-        assert self.test_obj.population == "pop"
-        assert self.test_obj.id == 1
-
-
-class TestCircuitEdgeId:
-    def setup_method(self):
-        self.test_obj = test_module.CircuitEdgeId("pop", 1)
-
-    def test_init(self):
-        assert isinstance(self.test_obj, test_module.CircuitEdgeId)
-        assert isinstance(self.test_obj, tuple)
-
-    def test_accessors(self):
-        assert self.test_obj.population == "pop"
-        assert self.test_obj.id == 1
 
 
 class TestCircuitNodeIds:
@@ -51,7 +25,7 @@ class TestCircuitNodeIds:
 
     @property
     def id_cls(self):
-        return test_module.CircuitNodeId
+        return CircuitNodeId
 
     @property
     def id_name(self):
@@ -209,6 +183,23 @@ class TestCircuitNodeIds:
         )
         assert test_obj == expected
 
+    def test_intersection(self):
+        test_obj = self.ids_cls.from_tuples(_multi_index(), sort_index=False)
+        other = self.ids_cls.from_tuples([("b", 0), ("a", 3), ("a", 2)], sort_index=False)
+        expected = self.ids_cls.from_tuples([("a", 2), ("b", 0)])
+        res = test_obj.intersection(other)
+
+        # res should be sorted when inplace=False
+        assert res == expected
+        assert test_obj != expected
+
+        res = test_obj.intersection(other, inplace=True)
+        assert res is None
+
+        # test_obj index should not be sorted when inplace=True
+        assert test_obj != expected
+        assert all(expected.index == test_obj.index.sort_values())
+
     def test_sample(self):
         with patch("numpy.random.choice", return_value=np.array([0, 3])):
             tested = self.test_obj_unsorted.sample(2, inplace=False)
@@ -318,7 +309,7 @@ class TestCircuitEdgeIds(TestCircuitNodeIds):
 
     @property
     def id_cls(self):
-        return test_module.CircuitEdgeId
+        return CircuitEdgeId
 
     @property
     def id_name(self):

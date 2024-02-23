@@ -21,9 +21,9 @@ import numpy as np
 import pandas as pd
 from more_itertools import roundrobin
 
+from bluepysnap.circuit_ids_types import IDS_DTYPE
 from bluepysnap.exceptions import BluepySnapError
 from bluepysnap.sonata_constants import Node
-from bluepysnap.utils import IDS_DTYPE
 
 L = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def _get_pyplot():
     return plt
 
 
-def spikes_firing_rate_histogram(filtered_report, time_binsize=None, ax=None):  # pragma: no cover
+def spikes_firing_rate_histogram(filtered_report, time_binsize=None, ax=None):
     """Spike firing rate histogram.
 
     This plot shows the number of nodes firing during a range of time.
@@ -62,38 +62,33 @@ def spikes_firing_rate_histogram(filtered_report, time_binsize=None, ax=None):  
     if time_binsize is not None and time_binsize <= 0:
         raise BluepySnapError(f"Invalid time_binsize = {time_binsize}. Should be > 0.")
 
-    spike_report = filtered_report.spike_report
-
-    times = filtered_report.report.index
-    node_count = filtered_report.report[["ids", "population"]].drop_duplicates().shape[0]
-
-    if len(times) == 0:
-        raise BluepySnapError(
-            "No data to display. You should check your " f"'group' query: {spike_report.group}."
-        )
-
-    time_start = np.min(times)
-    time_stop = np.max(times)
-
-    if time_binsize is None:
-        # heuristic for a nice bin size (~100 spikes per bin on average)
-        time_binsize = min(50.0, (time_stop - time_start) / ((len(times) / 100.0) + 1.0))
-
-    bins = np.append(np.arange(time_start, time_stop, time_binsize), time_stop)
-    hist, bin_edges = np.histogram(times, bins=bins)
-    freq = 1.0 * hist / node_count / (0.001 * time_binsize)
-
     if ax is None:
         ax = plt.gca()
         ax.set_xlabel("Time [ms]")
         ax.set_ylabel("PSTH [Hz]")
 
-    # use the middle of the bins instead of the start of the bin
-    ax.plot(0.5 * (bin_edges[1:] + bin_edges[:-1]), freq, label="PSTH", drawstyle="steps-mid")
+    times = filtered_report.report.index
+
+    if len(times) > 0:
+        time_start = np.min(times)
+        time_stop = np.max(times)
+
+        if time_binsize is None:
+            # heuristic for a nice bin size (~100 spikes per bin on average)
+            time_binsize = min(50.0, (time_stop - time_start) / ((len(times) / 100.0) + 1.0))
+
+        bins = np.append(np.arange(time_start, time_stop, time_binsize), time_stop)
+        hist, bin_edges = np.histogram(times, bins=bins)
+        node_count = filtered_report.report[["ids", "population"]].drop_duplicates().shape[0]
+        freq = 1.0 * hist / node_count / (0.001 * time_binsize)
+
+        # use the middle of the bins instead of the start of the bin
+        ax.plot(0.5 * (bin_edges[1:] + bin_edges[:-1]), freq, label="PSTH", drawstyle="steps-mid")
+
     return ax
 
 
-def spike_raster(filtered_report, y_axis=None, ax=None):  # pragma: no cover
+def spike_raster(filtered_report, y_axis=None, ax=None):
     """Spike raster plot.
 
     Shows a global overview of the circuit's firing nodes. The y axis can project either the
@@ -124,11 +119,14 @@ def spike_raster(filtered_report, y_axis=None, ax=None):  # pragma: no cover
         "ymax": -np.inf,
     }
 
+    def _is_categorical_or_object(dtype):
+        return pd.api.types.is_object_dtype(dtype) or isinstance(dtype, pd.CategoricalDtype)
+
     def _update_raster_properties():
         if y_axis is None:
             props["node_id_offset"] += spikes.nodes.size
             props["pop_separators"].append(props["node_id_offset"])
-        elif pd.api.types.is_categorical_dtype(spikes.nodes.property_dtypes[y_axis]):
+        elif _is_categorical_or_object(spikes.nodes.property_dtypes[y_axis]):
             props["categorical_values"].update(spikes.nodes.property_values(y_axis))
         else:
             props["ymin"] = min(props["ymin"], spikes.nodes.get(properties=y_axis).min())
@@ -138,7 +136,7 @@ def spike_raster(filtered_report, y_axis=None, ax=None):  # pragma: no cover
 
     # use np.int64 if displaying node_ids
     dtype = spike_report[population_names[0]].nodes.property_dtypes[y_axis] if y_axis else IDS_DTYPE
-    if pd.api.types.is_categorical_dtype(dtype):
+    if _is_categorical_or_object(dtype):
         # this is to prevent the problems when concatenating categoricals with unknown categories
         dtype = str
     data = pd.Series(index=report.index, dtype=dtype)
@@ -168,7 +166,7 @@ def spike_raster(filtered_report, y_axis=None, ax=None):  # pragma: no cover
             ax.set_ylim(0, props["node_id_offset"])
             ax.set_ylabel("nodes")
         else:
-            if np.issubdtype(type(data.iloc[0]), np.number):
+            if np.issubdtype(data.dtype, np.number):
                 # automatically expended by plt if ymin == ymax
                 ax.set_ylim(props["ymin"], props["ymax"])
             else:
@@ -186,7 +184,7 @@ def spike_raster(filtered_report, y_axis=None, ax=None):  # pragma: no cover
     return ax
 
 
-def spikes_isi(filtered_report, use_frequency=False, binsize=None, ax=None):  # pragma: no cover
+def spikes_isi(filtered_report, use_frequency=False, binsize=None, ax=None):
     # pylint: disable=too-many-locals
     """Interspike interval histogram.
 
@@ -209,13 +207,14 @@ def spikes_isi(filtered_report, use_frequency=False, binsize=None, ax=None):  # 
     if binsize is not None and binsize <= 0:
         raise BluepySnapError(f"Invalid binsize = {binsize}. Should be > 0.")
 
-    gb = filtered_report.report.groupby(["ids", "population"])
+    # Added `observed=True` to silence pandas warning about changing default value.
+    # However, report should not contain categories that are not in the dataframe.
+    gb = filtered_report.report.groupby(["ids", "population"], observed=True)
     values = np.concatenate([np.diff(node_spikes.index.to_numpy()) for _, node_spikes in gb])
 
     if len(values) == 0:
         raise BluepySnapError(
-            "No data to display. You should check your "
-            f"'group' query: {filtered_report.spike_report.group}."
+            f"No data to display. You should check your 'group' query: {filtered_report.group}."
         )
     if use_frequency:
         values = values[values > 0]  # filter out zero intervals
@@ -238,9 +237,7 @@ def spikes_isi(filtered_report, use_frequency=False, binsize=None, ax=None):  # 
     return ax
 
 
-def spikes_firing_animation(
-    filtered_report, x_axis=Node.X, y_axis=Node.Y, dt=20, ax=None
-):  # pragma: no cover
+def spikes_firing_animation(filtered_report, x_axis=Node.X, y_axis=Node.Y, dt=20, ax=None):
     # pylint: disable=too-many-locals,too-many-arguments,anomalous-backslash-in-string
     """Simple animation of simulation spikes.
 
@@ -254,12 +251,13 @@ def spikes_firing_animation(
         ax(matplotlib.Axis): matplotlib Axis to draw on (if not specified, pyplot.gca()
             and plt.figure() are used).
 
-    Returns :
+    Returns:
         (matplotlib.animation.FuncAnimation, matplotlib.Axis): the matplotlib animation object and
-            the corresponding axis.
+        the corresponding axis.
 
-    Notes:
+    Examples:
         From scripts:
+
         >>> import matplotlib.pyplot as plt
         >>> from bluepysnap import Simulation
         >>> report = Simulation("config.json").spikes["my_population"]
@@ -268,6 +266,7 @@ def spikes_firing_animation(
         >>> # to save the animation : do not plt.show() and just anim.save('my_movie.mp4')
 
         From notebooks:
+
         >>> from IPython.display import HTML
         >>> from bluepysnap import Simulation
         >>> report = Simulation("config.json").spikes["my_population"]
@@ -336,7 +335,7 @@ def spikes_firing_animation(
     return anim, ax
 
 
-def frame_trace(filtered_report, plot_type="mean", ax=None):  # pragma: no cover
+def frame_trace(filtered_report, plot_type="mean", ax=None):
     """Returns a plot displaying the voltage of a node or a compartment as a function of time.
 
     Args:

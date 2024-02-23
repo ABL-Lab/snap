@@ -1,11 +1,14 @@
 """Functions for schema based validation of circuit files."""
+
 from pathlib import Path
 
 import h5py
+import importlib_resources
 import jsonschema
 import numpy as np
-import pkg_resources
 import yaml
+
+from bluepysnap.exceptions import BluepySnapValidationError
 
 DEFINITIONS = "definitions"
 
@@ -13,11 +16,10 @@ DEFINITIONS = "definitions"
 def _load_schema_file(*args):
     """Load one of the predefined YAML schema files."""
     filename = str(Path(*args).with_suffix(".yaml"))
-    filepath = pkg_resources.resource_filename(__name__, filename)
-    if not Path(filepath).is_file():
+    filepath = importlib_resources.files(__package__) / filename
+    if not filepath.is_file():
         raise FileNotFoundError(f"Schema file {filepath} not found")
-    with open(filepath, encoding="utf-8") as fd:
-        return yaml.safe_load(fd)
+    return yaml.safe_load(filepath.read_text())
 
 
 def _parse_path(path, join_str):
@@ -45,7 +47,6 @@ def _wrap_errors(filepath, schema_errors, join_str):
     """
     # NOTE: would probably make more sense to have different parser for circuit,
     # as datatype and attributes only exists in the case of h5 files.
-    from bluepysnap.circuit_validation import Error
 
     warnings = []
     errors = []
@@ -57,7 +58,11 @@ def _wrap_errors(filepath, schema_errors, join_str):
             path = _parse_path(list(e.path)[:-1], join_str)
             warnings.append(f"incorrect datatype '{e.instance}' for '{path}': {e.message}")
         else:
-            if e.schema_path[-1] in ("maxProperties", "minProperties"):
+            if e.schema_path[-1] in e.schema.get("messages", {}):
+                path = _parse_path(e.path, join_str)
+                message = e.schema["messages"][e.schema_path[-1]]
+                message = f"{path}: {message}"
+            elif e.schema_path[-1] in ("maxProperties", "minProperties"):
                 path = _parse_path(e.path, join_str)
                 many_or_few = "many" if e.schema_path[-1] == "maxProperties" else "few"
                 message = f"{path}: too {many_or_few} properties"
@@ -73,16 +78,17 @@ def _wrap_errors(filepath, schema_errors, join_str):
             else:
                 path = _parse_path(e.path, join_str)
                 message = f"{path}: {e.message}"
-            errors.append(message)
+            if message not in errors:
+                errors.append(message)
 
     ret_errors = []
 
     if len(warnings) > 0:
         message = filepath + ":\n\t" + "\n\t".join(warnings)
-        ret_errors.append(Error(Error.WARNING, message))
+        ret_errors.append(BluepySnapValidationError.warning(message))
     if len(errors) > 0:
         message = filepath + ":\n\t" + "\n\t".join(errors)
-        ret_errors.append(Error(Error.FATAL, message))
+        ret_errors.append(BluepySnapValidationError.fatal(message))
 
     return ret_errors
 
@@ -98,7 +104,7 @@ def _parse_schema(object_type, sub_type=None):
     """Parses the schema from partial schemas for given object type.
 
     Args:
-        object_type (str): Type of the object. Accepts "edge", "node" and "circuit".
+        object_type (str): Type of the object. Accepts "edge", "node", "circuit" and "simulation".
         sub_type (str): Sub type of object. E.g., "biophysical".
 
     Returns:
@@ -106,6 +112,10 @@ def _parse_schema(object_type, sub_type=None):
     """
     if object_type == "circuit":
         return _load_schema_file(object_type)
+    elif object_type == "simulation":
+        schema = _load_schema_file(DEFINITIONS, "simulation_input")
+        schema.update(_load_schema_file(object_type))
+        return schema
     elif object_type not in ("edge", "node"):
         raise RuntimeError(f"Unknown object type: {object_type}")
 
@@ -153,6 +163,21 @@ def _get_h5_structure_as_dict(h5):
             properties[key] = value
 
     return properties
+
+
+def validate_simulation_schema(path, config):
+    """Validates a simulation config against a schema.
+
+    Args:
+        path (str): path to the config (for error messages)
+        config (dict): resolved bluepysnap config
+
+    Returns:
+        list: List of errors, empty if no errors
+    """
+    errors = _validate_schema_for_dict(_parse_schema("simulation"), config)
+
+    return _wrap_errors(path, errors, ".")
 
 
 def validate_circuit_schema(path, config):
@@ -227,8 +252,13 @@ def _resolve_types(resolver, types):
     return {k: _resolve_type(v["$ref"]) for k, v in types.items()}
 
 
+def _get_reference_resolver(schema):
+    """Get reference resolver for the given schema."""
+    return jsonschema.validators.RefResolver("", schema)
+
+
 def nodes_schema_types(nodes_type):
-    """Get the datatypes of the attribute for nodes.
+    """Get the datatypes of the attributes for nodes.
 
     Args:
         nodes_type (str): node type (e.g., "biophysical")
@@ -237,7 +267,7 @@ def nodes_schema_types(nodes_type):
         dict: name -> type of column
     """
     schema = _parse_schema("node", nodes_type)
-    resolver = jsonschema.validators.RefResolver("", schema)
+    resolver = _get_reference_resolver(schema)
 
     schema = schema["$node_file_defs"]["nodes_file_root"]["properties"]["nodes"]
     schema = schema["patternProperties"][""]["properties"]["0"]["properties"]
@@ -249,7 +279,7 @@ def nodes_schema_types(nodes_type):
 
 
 def edges_schema_types(edges_type, virtual):
-    """Get the datatypes of the attribute for nodes.
+    """Get the datatypes of the attributes for edges.
 
     Args:
         edges_type (str): edges type (e.g., "chemical")
@@ -262,7 +292,7 @@ def edges_schema_types(edges_type, virtual):
         edges_type += "_virtual"
 
     schema = _parse_schema("edge", edges_type)
-    resolver = jsonschema.validators.RefResolver("", schema)
+    resolver = _get_reference_resolver(schema)
 
     schema = schema["$edge_file_defs"]["edges_file_root"]["properties"]["edges"]
     schema = schema["patternProperties"][""]["properties"]["0"]["properties"]

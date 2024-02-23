@@ -8,10 +8,10 @@ import pytest
 
 import bluepysnap.frame_report as test_module
 from bluepysnap.bbp import Cell
-from bluepysnap.circuit_ids import CircuitNodeId, CircuitNodeIds
+from bluepysnap.circuit_ids import CircuitNodeIds
+from bluepysnap.circuit_ids_types import IDS_DTYPE, CircuitNodeId
 from bluepysnap.exceptions import BluepySnapError
 from bluepysnap.simulation import Simulation
-from bluepysnap.utils import IDS_DTYPE
 
 from utils import TEST_DATA_DIR
 
@@ -64,8 +64,8 @@ class TestFrameReport:
         assert isinstance(self.test_obj_info.simulation, Simulation)
 
     def test_node_set(self):
-        assert self.test_obj.node_set == {"layer": [2, 3]}
-        assert self.test_obj_info.node_set == {"layer": [2, 3]}
+        assert self.test_obj.node_set == "Layer23"
+        assert self.test_obj_info.node_set == "Layer23"
 
     def test_population_names(self):
         assert sorted(self.test_obj.population_names) == ["default", "default2"]
@@ -99,37 +99,63 @@ class TestCompartmentReport:
             isinstance(report, test_module.PopulationCompartmentReport)
 
     def test_filter(self):
+        expected = pd.DataFrame(
+            data=[
+                np.array([0.3, 1.3, 2.3, 3.3, 4.3, 5.3, 6.3] * 2, dtype=np.float32) + 0.1 * i
+                for i in range(4)
+            ],
+            columns=pd.MultiIndex.from_tuples(
+                [
+                    ("default", 0, 0),
+                    ("default", 0, 1),
+                    ("default", 1, 0),
+                    ("default", 1, 1),
+                    ("default", 2, 0),
+                    ("default", 2, 1),
+                    ("default", 2, 1),
+                    ("default2", 0, 0),
+                    ("default2", 0, 1),
+                    ("default2", 1, 0),
+                    ("default2", 1, 1),
+                    ("default2", 2, 0),
+                    ("default2", 2, 1),
+                    ("default2", 2, 1),
+                ]
+            ),
+            index=np.array([0.3, 0.4, 0.5, 0.6]),
+        )
+
         filtered = self.test_obj.filter(group=[0], t_start=0.3, t_stop=0.6)
         assert filtered.frame_report == self.test_obj
         assert filtered.t_start == 0.3
         assert filtered.t_stop == 0.6
         assert filtered.group == [0]
         assert isinstance(filtered, test_module.FilteredFrameReport)
-        npt.assert_allclose(filtered.report.index, np.array([0.3, 0.4, 0.5, 0.6]))
-        assert filtered.report.columns.tolist() == [
+        expected_columns = [
             ("default", 0, 0),
             ("default", 0, 1),
             ("default2", 0, 0),
             ("default2", 0, 1),
         ]
+        pdt.assert_frame_equal(filtered.report, expected.loc[:, expected_columns])
 
         filtered = self.test_obj.filter(group={"other1": ["B"]}, t_start=0.3, t_stop=0.6)
-        npt.assert_allclose(filtered.report.index, np.array([0.3, 0.4, 0.5, 0.6]))
-        assert filtered.report.columns.tolist() == [("default2", 1, 0), ("default2", 1, 1)]
+        expected_columns = [("default2", 1, 0), ("default2", 1, 1)]
+        pdt.assert_frame_equal(filtered.report, expected.loc[:, expected_columns])
 
         filtered = self.test_obj.filter(group={"population": "default2"}, t_start=0.3, t_stop=0.6)
-        assert filtered.report.columns.tolist() == [
+        expected_columns = [
             ("default2", 0, 0),
             ("default2", 0, 1),
             ("default2", 1, 0),
             ("default2", 1, 1),
             ("default2", 2, 0),
             ("default2", 2, 1),
-            ("default2", 2, 1),
         ]
+        pdt.assert_frame_equal(filtered.report, expected.loc[:, expected_columns])
 
         filtered = self.test_obj.filter(group={"population": "default3"}, t_start=0.3, t_stop=0.6)
-        pdt.assert_frame_equal(filtered.report, pd.DataFrame())
+        pdt.assert_frame_equal(filtered.report, expected.iloc[:0, :0])
 
 
 class TestSomaReport:
@@ -146,42 +172,45 @@ class TestSomaReport:
             isinstance(report, test_module.PopulationSomaReport)
 
     def test_filter(self):
+        expected = pd.DataFrame(
+            data=[
+                np.array([0.3, 1.3, 2.3, 0.3, 1.3, 2.3], dtype=np.float32) + 0.1 * i
+                for i in range(4)
+            ],
+            columns=pd.MultiIndex.from_tuples(
+                [
+                    ("default", 0),
+                    ("default", 1),
+                    ("default", 2),
+                    ("default2", 0),
+                    ("default2", 1),
+                    ("default2", 2),
+                ]
+            ),
+            index=np.array([0.3, 0.4, 0.5, 0.6]),
+        )
+
         filtered = self.test_obj.filter(group=None, t_start=0.3, t_stop=0.6)
         assert filtered.frame_report == self.test_obj
         assert filtered.t_start == 0.3
         assert filtered.t_stop == 0.6
         assert filtered.group is None
         assert isinstance(filtered, test_module.FilteredFrameReport)
-        npt.assert_allclose(filtered.report.index, np.array([0.3, 0.4, 0.5, 0.6]))
-        assert filtered.report.columns.tolist() == [
-            ("default", 0),
-            ("default", 1),
-            ("default", 2),
-            ("default2", 0),
-            ("default2", 1),
-            ("default2", 2),
-        ]
+        pdt.assert_frame_equal(filtered.report, expected)
 
         filtered = self.test_obj.filter(group={"other1": ["B"]}, t_start=0.3, t_stop=0.6)
-        npt.assert_allclose(filtered.report.index, np.array([0.3, 0.4, 0.5, 0.6]))
-        assert filtered.report.columns.tolist() == [("default2", 1)]
+        pdt.assert_frame_equal(filtered.report, expected.loc[:, [("default2", 1)]])
 
         filtered = self.test_obj.filter(group={"population": "default2"}, t_start=0.3, t_stop=0.6)
-        assert filtered.report.columns.tolist() == [
-            ("default2", 0),
-            ("default2", 1),
-            ("default2", 2),
-        ]
+        pdt.assert_frame_equal(filtered.report, expected.loc[:, ["default2"]])
 
         filtered = self.test_obj.filter(group={"population": "default3"}, t_start=0.3, t_stop=0.6)
-        pdt.assert_frame_equal(filtered.report, pd.DataFrame())
+        pdt.assert_frame_equal(filtered.report, expected.iloc[:0, :0])
 
         ids = CircuitNodeIds.from_arrays(["default", "default", "default2"], [0, 1, 1])
         filtered = self.test_obj.filter(group=ids, t_start=0.3, t_stop=0.6)
-        assert filtered.report.columns.tolist() == [("default", 0), ("default", 1), ("default2", 1)]
-        ids = CircuitNodeIds.from_tuples([("default2", 1)])
-        npt.assert_allclose(filtered.report.loc[:, ids.index].index, np.array([0.3, 0.4, 0.5, 0.6]))
-        npt.assert_allclose(filtered.report.loc[:, ids.index], np.array([[1.3, 1.4, 1.5, 1.6]]).T)
+        expected_columns = [("default", 0), ("default", 1), ("default2", 1)]
+        pdt.assert_frame_equal(filtered.report, expected.loc[:, expected_columns])
 
 
 class TestPopulationFrameReport:
@@ -194,7 +223,7 @@ class TestPopulationFrameReport:
 
     def test__resolve(self):
         with pytest.raises(NotImplementedError):
-            self.test_obj._resolve([1])
+            self.test_obj.resolve_nodes([1])
 
 
 class TestPopulationCompartmentReport:
@@ -206,10 +235,15 @@ class TestPopulationCompartmentReport:
         ids = [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (2, 1)]
         self.df = pd.DataFrame(data=data, columns=pd.MultiIndex.from_tuples(ids), index=timestamps)
 
+    @property
+    def empty_df(self):
+        """Return an empty DataFrame with the original types of index and columns."""
+        return self.df.iloc[:0, :0]
+
     def test__resolve(self):
-        npt.assert_array_equal(self.test_obj._resolve({Cell.MTYPE: "L6_Y"}), [1, 2])
-        assert self.test_obj._resolve({Cell.MTYPE: "L2_X"}) == [0]
-        npt.assert_array_equal(self.test_obj._resolve("Node12_L6_Y"), [1, 2])
+        npt.assert_array_equal(self.test_obj.resolve_nodes({Cell.MTYPE: "L6_Y"}), [1, 2])
+        assert self.test_obj.resolve_nodes({Cell.MTYPE: "L2_X"}) == [0]
+        npt.assert_array_equal(self.test_obj.resolve_nodes("Node12_L6_Y"), [1, 2])
 
     def test_nodes(self):
         assert self.test_obj.nodes.get(group=2, properties=Cell.MTYPE) == "L6_Y"
@@ -220,73 +254,116 @@ class TestPopulationCompartmentReport:
         with pytest.raises(BluepySnapError):
             test_obj.nodes
 
-    def test_get(self):
-        pdt.assert_frame_equal(self.test_obj.get(), self.df)
-        pdt.assert_frame_equal(self.test_obj.get([]), pd.DataFrame())
-        pdt.assert_frame_equal(self.test_obj.get(np.array([])), pd.DataFrame())
-        pdt.assert_frame_equal(self.test_obj.get(()), pd.DataFrame())
+    @pytest.mark.parametrize("t_step", [None, 0.02, 0.04, 0.0401, 0.0399, 0.05, 200000])
+    def test_get(self, t_step):
+        def _assert_frame_equal(df1, df2):
+            # compare df1 and df2, after filtering df2 according to t_stride
+            df2 = df2.iloc[::t_stride]
+            pdt.assert_frame_equal(df1, df2)
 
-        pdt.assert_frame_equal(self.test_obj.get(2), self.df.loc[:, [2]])
-        pdt.assert_frame_equal(self.test_obj.get(CircuitNodeId("default", 2)), self.df.loc[:, [2]])
+        # calculate the expected t_stride, depending on t_step and dt (varying across tests)
+        t_stride = round(t_step / self.test_obj.frame_report.dt) if t_step is not None else 1
+
+        _assert_frame_equal(self.test_obj.get(t_step=t_step), self.df)
+        _assert_frame_equal(self.test_obj.get([], t_step=t_step), self.empty_df)
+        _assert_frame_equal(self.test_obj.get(np.array([]), t_step=t_step), self.empty_df)
+        _assert_frame_equal(self.test_obj.get((), t_step=t_step), self.empty_df)
+
+        _assert_frame_equal(self.test_obj.get(2, t_step=t_step), self.df.loc[:, [2]])
+        _assert_frame_equal(
+            self.test_obj.get(CircuitNodeId("default", 2), t_step=t_step), self.df.loc[:, [2]]
+        )
 
         # not from this population
-        pdt.assert_frame_equal(self.test_obj.get(CircuitNodeId("default2", 2)), pd.DataFrame())
-
-        pdt.assert_frame_equal(self.test_obj.get([2, 0]), self.df.loc[:, [0, 2]])
-
-        pdt.assert_frame_equal(self.test_obj.get([0, 2]), self.df.loc[:, [0, 2]])
-
-        pdt.assert_frame_equal(self.test_obj.get(np.asarray([0, 2])), self.df.loc[:, [0, 2]])
-
-        pdt.assert_frame_equal(self.test_obj.get([2], t_stop=0.5), self.df.iloc[:6].loc[:, [2]])
-
-        pdt.assert_frame_equal(self.test_obj.get([2], t_stop=0.55), self.df.iloc[:6].loc[:, [2]])
-
-        pdt.assert_frame_equal(self.test_obj.get([2], t_start=0.5), self.df.iloc[5:].loc[:, [2]])
-
-        pdt.assert_frame_equal(
-            self.test_obj.get([2], t_start=0.5, t_stop=0.8), self.df.iloc[5:9].loc[:, [2]]
+        _assert_frame_equal(
+            self.test_obj.get(CircuitNodeId("default2", 2), t_step=t_step), self.empty_df
         )
 
-        pdt.assert_frame_equal(
-            self.test_obj.get([2, 1], t_start=0.5, t_stop=0.8), self.df.iloc[5:9].loc[:, [1, 2]]
+        _assert_frame_equal(self.test_obj.get([2, 0], t_step=t_step), self.df.loc[:, [0, 2]])
+
+        _assert_frame_equal(self.test_obj.get([0, 2], t_step=t_step), self.df.loc[:, [0, 2]])
+
+        _assert_frame_equal(
+            self.test_obj.get(np.asarray([0, 2]), t_step=t_step), self.df.loc[:, [0, 2]]
         )
 
-        pdt.assert_frame_equal(
-            self.test_obj.get([2, 1], t_start=0.2, t_stop=0.8), self.df.iloc[2:9].loc[:, [1, 2]]
+        _assert_frame_equal(
+            self.test_obj.get([2], t_stop=0.5, t_step=t_step), self.df.iloc[:6].loc[:, [2]]
         )
 
-        pdt.assert_frame_equal(
-            self.test_obj.get(group={Cell.MTYPE: "L6_Y"}, t_start=0.2, t_stop=0.8),
+        _assert_frame_equal(
+            self.test_obj.get([2], t_stop=0.55, t_step=t_step), self.df.iloc[:6].loc[:, [2]]
+        )
+
+        _assert_frame_equal(
+            self.test_obj.get([2], t_start=0.5, t_step=t_step), self.df.iloc[5:].loc[:, [2]]
+        )
+
+        _assert_frame_equal(
+            self.test_obj.get([2], t_start=0.5, t_stop=0.8, t_step=t_step),
+            self.df.iloc[5:9].loc[:, [2]],
+        )
+
+        _assert_frame_equal(
+            self.test_obj.get([2, 1], t_start=0.5, t_stop=0.8, t_step=t_step),
+            self.df.iloc[5:9].loc[:, [1, 2]],
+        )
+
+        _assert_frame_equal(
+            self.test_obj.get([2, 1], t_start=0.2, t_stop=0.8, t_step=t_step),
             self.df.iloc[2:9].loc[:, [1, 2]],
         )
 
-        pdt.assert_frame_equal(self.test_obj.get(group={Cell.MTYPE: "L2_X"}), self.df.loc[:, [0]])
+        _assert_frame_equal(
+            self.test_obj.get(group={Cell.MTYPE: "L6_Y"}, t_start=0.2, t_stop=0.8, t_step=t_step),
+            self.df.iloc[2:9].loc[:, [1, 2]],
+        )
 
-        pdt.assert_frame_equal(self.test_obj.get(group="Layer23"), self.df.loc[:, [0]])
+        _assert_frame_equal(
+            self.test_obj.get(group={Cell.MTYPE: "L2_X"}, t_step=t_step), self.df.loc[:, [0]]
+        )
+
+        _assert_frame_equal(self.test_obj.get(group="Layer23", t_step=t_step), self.df.loc[:, [0]])
 
         ids = CircuitNodeIds.from_arrays(["default", "default", "default2"], [0, 2, 1])
-        pdt.assert_frame_equal(self.test_obj.get(group=ids), self.df.loc[:, [0, 2]])
+        _assert_frame_equal(self.test_obj.get(group=ids, t_step=t_step), self.df.loc[:, [0, 2]])
 
-        with pytest.raises(BluepySnapError):
-            self.test_obj.get(-1, t_start=0.2)
+        # test that simulation node_set is used
+        _assert_frame_equal(
+            self.test_obj.get("only_exists_in_simulation", t_step=t_step), self.df.loc[:, [0, 2]]
+        )
 
-        with pytest.raises(BluepySnapError):
-            self.test_obj.get(0, t_start=-1)
+        with pytest.raises(
+            BluepySnapError, match="All node IDs must be >= 0 and < 3 for population 'default'"
+        ):
+            self.test_obj.get(-1, t_start=0.2, t_step=t_step)
 
-        with pytest.raises(BluepySnapError):
-            self.test_obj.get([0, 2], t_start=15)
+        with pytest.raises(BluepySnapError, match="Times cannot be negative"):
+            self.test_obj.get(0, t_start=-1, t_step=t_step)
 
-        with pytest.raises(BluepySnapError):
-            self.test_obj.get(4)
+        with pytest.raises(BluepySnapError, match="tstart is after the end of the range"):
+            self.test_obj.get([0, 2], t_start=15, t_step=t_step)
+
+        with pytest.raises(
+            BluepySnapError, match="All node IDs must be >= 0 and < 3 for population 'default'"
+        ):
+            self.test_obj.get(4, t_step=t_step)
+
+    @pytest.mark.parametrize("t_step", [0, -1, 0.0000001])
+    def test_get_with_invalid_t_step(self, t_step):
+        match = f"Invalid t_step={t_step}. It should be None or a multiple of"
+        with pytest.raises(BluepySnapError, match=match):
+            self.test_obj.get(t_step=t_step)
 
     def test_get_partially_not_in_report(self):
-        with patch.object(self.test_obj.__class__, "_resolve", return_value=np.asarray([0, 4])):
+        with patch.object(
+            self.test_obj.__class__, "resolve_nodes", return_value=np.asarray([0, 4])
+        ):
             pdt.assert_frame_equal(self.test_obj.get([0, 4]), self.df.loc[:, [0]])
 
     def test_get_not_in_report(self):
-        with patch.object(self.test_obj.__class__, "_resolve", return_value=np.asarray([4])):
-            pdt.assert_frame_equal(self.test_obj.get([4]), pd.DataFrame())
+        with patch.object(self.test_obj.__class__, "resolve_nodes", return_value=np.asarray([4])):
+            pdt.assert_frame_equal(self.test_obj.get([4]), self.empty_df)
 
     def test_node_ids(self):
         npt.assert_array_equal(self.test_obj.node_ids, np.array(sorted([0, 1, 2]), dtype=IDS_DTYPE))

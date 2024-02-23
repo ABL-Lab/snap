@@ -1,6 +1,113 @@
 Changelog
 =========
 
+Version v3.0.1
+--------------
+
+Bug Fixes
+~~~~~~~~~
+- Fixed a bug causing some iterables (e.g., tuples) in queries not to work as expected
+
+
+Version v3.0.0
+--------------
+
+New Features
+~~~~~~~~~~~~
+- Added simulation config validation
+- Added a new  commandline subcommands: ``validate-simulation``, ``validate-circuit``
+
+Breaking Changes
+~~~~~~~~~~~~~~~~
+- Edge populations' ``iter_connections`` returns ``CircuitNodeId`` instead of ``int``
+- Removed the commandline subcommand ``validate`` in favor of new ``validate-circuit`` command
+
+
+Version v2.0.2
+--------------
+
+Improvements
+~~~~~~~~~~~~
+- Readded compatibility with ``jsonschema<4.18``
+
+
+Version v2.0.1
+--------------
+
+Bug Fixes
+~~~~~~~~~
+- Fixed pylint ``cyclic-import`` issues
+- Fixed docstrings of ``Nodes.get``, ``Edges.get``
+- Added basic testing to ``_plotting.py``
+
+
+Version v2.0.0
+--------------
+
+New Features
+~~~~~~~~~~~~
+- ``NodeSets`` object can be instantiated with three methods: ``from_file``, ``from_string``, ``from_dict``
+- Simulation inputs are now accessible with ``Simulation.inputs``
+- ``libsonata`` reader of ``synapse_replay`` files can now be accessed with ``simulation.inputs["<input_name>"].reader``
+
+  - only ``h5`` format is supported
+
+Improvements
+~~~~~~~~~~~~
+- Node set resolution is done by libsonata
+- Simulation node set extends Circuit node set
+
+  - A warning is raised if any of the circuit's node sets is overwritten
+- Added kwarg: ``raise_missing_property`` to ``NodePopulation.get``
+- Undeprecated calling ``Edges.get`` and ``EdgePopulation.get`` with ``properties=None``
+
+Bug Fixes
+~~~~~~~~~
+- Fixed the `Same property with different dtype` issue with ``nodes.get``, ``edges.get``
+
+Breaking Changes
+~~~~~~~~~~~~~~~~
+- ``nodes.get`` and ``edges.get`` (and ``network.get``) no longer return a dataframe
+
+  - returns a generator yielding tuples of ``(<population_name>, <dataframe>)`` instead
+  - to get the previous behavior (all in one dataframe): ``pd.concat(df for _, df in circuit.nodes.get(*args, **kwargs))``
+- Removed ``Network.property_dtypes``, ``CircuitIds.index_schema``
+
+- ``Circuit.node_sets``, ``Simulation.node_sets`` returns ``NodeSets`` object initialized with empty dict when node sets file is not present
+- ``NodeSet.resolved`` is no longer available
+- ``FrameReport.node_set`` returns node_set name instead of resolved node set query
+- Removed ``Edges.properties``, ``EdgePopulation.properties`` that were already supposed to be removed in v1.0.0
+
+
+Version v1.0.7
+--------------
+
+New Features
+~~~~~~~~~~~~
+- Added ``CircuitIds.intersection`` to take the intersection of two ``CircuitIds``.
+
+Improvements
+~~~~~~~~~~~~
+- Improve performance when querying a population with get() and ids().
+
+Bug Fixes
+~~~~~~~~~
+- Fix CircuitIds.sample() to always return different samples.
+- Ensure that the report DataFrames have the same schema even when empty.
+
+Version v1.0.6
+--------------
+
+Improvements
+~~~~~~~~~~~~
+- Clarification for partial circuit configs
+- Publish version as ``bluepysnap.__version__``
+- Support lazy loading of nodes attributes.
+- Add t_step parameter to frame reports.
+- Add python 3.11 tests.
+- Drop python 3.7 support.
+
+
 Version v1.0.5
 --------------
 

@@ -1,6 +1,7 @@
 import json
 import pickle
 
+import pandas as pd
 import pytest
 from libsonata import SonataError
 
@@ -9,7 +10,7 @@ from bluepysnap.edges import EdgePopulation, Edges
 from bluepysnap.exceptions import BluepySnapError
 from bluepysnap.nodes import NodePopulation, Nodes
 
-from utils import TEST_DATA_DIR, copy_test_data, edit_config, skip_if_libsonata_0_1_16
+from utils import PICKLED_SIZE_ADJUSTMENT, TEST_DATA_DIR, copy_test_data, edit_config
 
 
 def test_all():
@@ -44,7 +45,6 @@ def test_all():
         circuit.get_edge_population_config(fake_pop)
 
 
-@skip_if_libsonata_0_1_16
 def test_duplicate_node_populations():
     with copy_test_data() as (_, config_path):
         with edit_config(config_path) as config:
@@ -55,7 +55,6 @@ def test_duplicate_node_populations():
             test_module.Circuit(config_path)
 
 
-@skip_if_libsonata_0_1_16
 def test_duplicate_edge_populations():
     with copy_test_data() as (_, config_path):
         with edit_config(config_path) as config:
@@ -71,7 +70,7 @@ def test_no_node_set():
         with edit_config(config_path) as config:
             config.pop("node_sets_file")
         circuit = test_module.Circuit(config_path)
-        assert circuit.node_sets == {}
+        assert circuit.node_sets.content == {}
 
 
 def test_integration():
@@ -80,6 +79,7 @@ def test_integration():
     edge_ids = circuit.edges.afferent_edges(node_ids)
     edge_props = circuit.edges.get(edge_ids, properties=["syn_weight", "delay"])
     edge_reduced = edge_ids.limit(2)
+    edge_props = pd.concat(df for _, df in edge_props)
     edge_props_reduced = edge_props.loc[edge_reduced]
     assert edge_props_reduced["syn_weight"].tolist() == [1, 1]
 
@@ -94,7 +94,7 @@ def test_pickle(tmp_path):
     with open(pickle_path, "rb") as fd:
         circuit = pickle.load(fd)
 
-    assert pickle_path.stat().st_size < 200
+    assert pickle_path.stat().st_size < 60 + PICKLED_SIZE_ADJUSTMENT
     assert list(circuit.edges) == ["default", "default2"]
 
 

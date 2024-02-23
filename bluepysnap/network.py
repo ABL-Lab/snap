@@ -123,6 +123,9 @@ class NetworkObject(abc.ABC):
         Returns:
             CircuitNodeIds/CircuitEdgeIds: containing the IDs and the populations.
         """
+        if not self.population_names:
+            raise BluepySnapError("Cannot create CircuitIds for empty population.")
+
         str_type = f"<U{max(len(pop) for pop in self.population_names)}"
         ids = []
         populations = []
@@ -146,7 +149,7 @@ class NetworkObject(abc.ABC):
 
     @abc.abstractmethod
     def get(self, group=None, properties=None):
-        """Returns the properties of the NetworkObject."""
+        """Yields the properties of the NetworkObject."""
         ids = self.ids(group)
         properties = utils.ensure_list(properties)
         # We don t convert to set properties itself to keep the column order.
@@ -156,14 +159,6 @@ class NetworkObject(abc.ABC):
         if unknown_props:
             raise BluepySnapError(f"Unknown properties required: {unknown_props}")
 
-        # Retrieve the dtypes of the selected properties.
-        # However, the int dtype may not be preserved if some values are NaN.
-        dtypes = {
-            column: dtype
-            for column, dtype in self.property_dtypes.items()
-            if column in properties_set
-        }
-        dataframes = [pd.DataFrame(columns=properties, index=ids.index_schema).astype(dtypes)]
         for name, pop in sorted(self.items()):
             # since ids is sorted, global_pop_ids should be sorted as well
             global_pop_ids = ids.filter_population(name)
@@ -174,10 +169,9 @@ class NetworkObject(abc.ABC):
                 # However, it's a bit more performant than converting the Series to numpy arrays.
                 pop_df = pd.DataFrame({prop: pop.get(pop_ids, prop) for prop in pop_properties})
                 pop_df.index = global_pop_ids.index
-                dataframes.append(pop_df)
-        res = pd.concat(dataframes)
-        assert res.index.is_monotonic_increasing, "The index should be already sorted"
-        return res
+
+                # Sort the columns in the given order
+                yield name, pop_df[[p for p in properties if p in pop_properties]]
 
     @abc.abstractmethod
     def __getstate__(self):

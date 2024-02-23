@@ -17,17 +17,14 @@
 
 """Circuit ids."""
 import abc
-from collections import namedtuple
 
 import numpy as np
 import pandas as pd
 
 from bluepysnap import utils
 from bluepysnap._doctools import AbstractDocSubstitutionMeta
+from bluepysnap.circuit_ids_types import CircuitEdgeId, CircuitNodeId
 from bluepysnap.exceptions import BluepySnapError
-
-CircuitNodeId = namedtuple("CircuitNodeId", ("population", "id"))
-CircuitEdgeId = namedtuple("CircuitEdgeId", ("population", "id"))
 
 
 class CircuitIds(abc.ABC):
@@ -54,11 +51,6 @@ class CircuitIds(abc.ABC):
             # best perf compared to sort_values. Sorted by population and ids.
             index = index.sortlevel()[0]
         self.index = index
-
-    @property
-    def index_schema(self):
-        """Return an empty index with the same names of the wrapped index."""
-        return pd.MultiIndex.from_tuples([], names=self.index.names)
 
     @classmethod
     def _instance(cls, index, sort_index=True):
@@ -229,7 +221,7 @@ class CircuitIds(abc.ABC):
                 the size of the CircuitIds then all ids are taken and shuffled.
             inplace (bool): if set to True. Do the transformation inplace.
         """
-        sampling = np.random.choice(len(self), size=min(sample_size, len(self)))
+        sampling = np.random.choice(len(self), size=min(sample_size, len(self)), replace=False)
         return self._apply(lambda x: x[sampling], inplace)
 
     def limit(self, limit_size, inplace=False):
@@ -252,6 +244,18 @@ class CircuitIds(abc.ABC):
             this function does not sort the ids
         """
         return self._apply(lambda x: x.unique(), inplace)
+
+    def intersection(self, circuit_ids, inplace=False):
+        """Take the intersection of this CircuitIds and the input.
+
+        The index of the resulting object is sorted if ``inplace=False``.
+        Otherwise, the orginal order of the index is kept.
+
+        Args:
+            circuit_ids (CircuitIds): The CircuitIds to intersect with.
+            inplace (bool): if set to True, do the transformation inplace.
+        """
+        return self._apply(lambda x: x.intersection(circuit_ids.index), inplace)
 
     def to_csv(self, filepath):
         """Save CircuitIds to csv format."""

@@ -16,6 +16,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 """Frame report access."""
 import logging
+from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
@@ -23,8 +24,9 @@ from cached_property import cached_property
 from libsonata import ElementReportReader, SonataError
 
 import bluepysnap._plotting
+from bluepysnap import query
 from bluepysnap.exceptions import BluepySnapError
-from bluepysnap.utils import ensure_ids, ensure_list
+from bluepysnap.utils import ensure_ids
 
 L = logging.getLogger(__name__)
 
@@ -62,7 +64,7 @@ class PopulationFrameReport:
         """Access to the population name."""
         return self._population_name
 
-    def _resolve(self, group):
+    def resolve_nodes(self, group, raise_missing_property=True):
         """Transform a group into ids array.
 
         Notes:
@@ -76,25 +78,33 @@ class PopulationFrameReport:
         """Allows to change the columns names if needed."""
         return columns
 
-    def get(self, group=None, t_start=None, t_stop=None):
+    def get(self, group=None, t_start=None, t_stop=None, t_step=None):
         """Fetch data from the report.
 
         Args:
             group (None/int/list/np.array/dict): Get frames filtered by :ref:`Group Concept`.
             t_start (float): Include only frames occurring at or after this time.
             t_stop (float): Include only frames occurring at or before this time.
+            t_step (float): Optional time step, useful to reduce the number of samples.
+                It should be a multiple of the report time step dt, and it's equal to dt by default.
+                If the given t_step isn't an exact multiple, it's rounded to the closer multiple.
+                Only the samples at t = t0 + k * t_step, for k = 0, 1... are returned,
+                where t0 is the first sample time >= t_start.
 
         Returns:
             pandas.DataFrame: frame as columns indexed by timestamps.
         """
-        ids = self._resolve(group).tolist()
+        t_stride = round(t_step / self.frame_report.dt) if t_step is not None else 1
+        if t_stride < 1:
+            msg = f"Invalid {t_step=}. It should be None or a multiple of {self.frame_report.dt}."
+            raise BluepySnapError(msg)
+        ids = self.resolve_nodes(group).tolist()
         try:
-            view = self._frame_population.get(node_ids=ids, tstart=t_start, tstop=t_stop)
+            view = self._frame_population.get(
+                node_ids=ids, tstart=t_start, tstop=t_stop, tstride=t_stride
+            )
         except SonataError as e:
             raise BluepySnapError(e) from e
-
-        if len(view.ids) == 0:
-            return pd.DataFrame()
 
         # cell ids and section ids in the columns are enforced to be int64
         # to avoid issues with numpy automatic conversions and to ensure that
@@ -148,25 +158,23 @@ class FilteredFrameReport:
 
         Returns:
             pandas.DataFrame: A DataFrame containing the data from the report. Row's indices are the
-                different timestamps and the column's MultiIndex are :
-                - (population_name, node_id, compartment id) for the CompartmentReport
-                - (population_name, node_id) for the SomaReport
+            different timestamps and the column's MultiIndex are:
+
+            - (population_name, node_id, compartment id) for the CompartmentReport
+            - (population_name, node_id) for the SomaReport
         """
-        res = pd.DataFrame()
+        dataframes = {}
         for population in self.frame_report.population_names:
             frames = self.frame_report[population]
-            try:
-                ids = frames.nodes.ids(group=self.group)
-            except BluepySnapError:
-                continue
-            data = frames.get(group=ids, t_start=self.t_start, t_stop=self.t_stop)
-            if data.empty:
-                continue
-            new_index = tuple(tuple([population] + ensure_list(x)) for x in data.columns)
-            data.columns = pd.MultiIndex.from_tuples(new_index)
-            # need to do this in order to preserve MultiIndex for columns
-            res = data if res.empty else data.join(res, how="outer")
-        return res.sort_index().sort_index(axis=1)
+            ids = frames.resolve_nodes(self.group, raise_missing_property=False)
+            df = frames.get(group=ids, t_start=self.t_start, t_stop=self.t_stop)
+            dataframes[population] = df
+        # optimize when there is at most one non-empty df: use copy=False, and no need to sort
+        if sum(not df.empty for df in dataframes.values()) <= 1:
+            return pd.concat(dataframes, axis=1, copy=False)
+        # when concatenating multiple df, don't use copy=False because 2x slower (Pandas 2.0.2)
+        result = pd.concat(dataframes, axis=1)
+        return result.sort_index(axis=0).sort_index(axis=1)
 
     # pylint: disable=protected-access
     trace = bluepysnap._plotting.frame_trace
@@ -239,8 +247,8 @@ class FrameReport:
 
     @property
     def node_set(self):
-        """Returns the node set for the report."""
-        return self.simulation.node_sets[self.to_libsonata.cells]
+        """Returns the name of the node set for the report."""
+        return self.to_libsonata.cells
 
     @property
     def simulation(self):
@@ -285,14 +293,25 @@ class FrameReport:
 class PopulationCompartmentReport(PopulationFrameReport):
     """Access to PopulationCompartmentsReport data."""
 
+    @property
+    def _node_sets(self):
+        """Access to simulation node sets."""
+        return self.frame_report.simulation.node_sets
+
     @cached_property
     def nodes(self):
         """Returns the NodePopulation corresponding to this report."""
         return self.frame_report.simulation.circuit.nodes[self._population_name]
 
-    def _resolve(self, group):
+    def resolve_nodes(self, group, raise_missing_property=True):
         """Transform a group into a node_id array."""
-        return self.nodes.ids(group=group)
+        if isinstance(group, str):
+            group = self._node_sets[group]
+        elif isinstance(group, Mapping):
+            group = query.resolve_nodesets(
+                self._node_sets, self.nodes, group, raise_missing_property
+            )
+        return self.nodes.ids(group=group, raise_missing_property=raise_missing_property)
 
 
 class CompartmentReport(FrameReport):

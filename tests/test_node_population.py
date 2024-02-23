@@ -1,3 +1,4 @@
+import itertools
 import json
 import pickle
 import sys
@@ -9,17 +10,21 @@ import pandas as pd
 import pandas.testing as pdt
 import pytest
 from numpy import dtype
-from pandas.api.types import is_categorical_dtype
 
 from bluepysnap.bbp import Cell
 from bluepysnap.circuit import Circuit
-from bluepysnap.circuit_ids import CircuitNodeId, CircuitNodeIds
+from bluepysnap.circuit_ids import CircuitNodeIds
+from bluepysnap.circuit_ids_types import IDS_DTYPE, CircuitNodeId
 from bluepysnap.exceptions import BluepySnapError
 from bluepysnap.node_sets import NodeSets
 from bluepysnap.sonata_constants import DEFAULT_NODE_TYPE, Node
-from bluepysnap.utils import IDS_DTYPE
 
-from utils import TEST_DATA_DIR, create_node_population
+from utils import (
+    PICKLED_SIZE_ADJUSTMENT,
+    TEST_DATA_DIR,
+    assert_array_equal_strict,
+    create_node_population,
+)
 
 
 class TestNodePopulation:
@@ -32,6 +37,7 @@ class TestNodePopulation:
         assert self.test_obj.type == DEFAULT_NODE_TYPE
         assert sorted(self.test_obj.property_names) == [
             Cell.HOLDING_CURRENT,
+            Cell.INPUT_RESISTANCE,
             Cell.LAYER,
             Cell.MODEL_TEMPLATE,
             Cell.MODEL_TYPE,
@@ -52,7 +58,7 @@ class TestNodePopulation:
         test_obj = create_node_population(
             str(TEST_DATA_DIR / "nodes.h5"),
             "default",
-            node_sets=NodeSets(str(TEST_DATA_DIR / "node_sets.json")),
+            node_sets=NodeSets.from_file(str(TEST_DATA_DIR / "node_sets.json")),
             pop_type="fake_type",
         )
         assert test_obj.type == "fake_type"
@@ -81,6 +87,7 @@ class TestNodePopulation:
                 dtype("float64"),
                 dtype("float64"),
                 dtype("float64"),
+                dtype("float32"),
             ],
             index=[
                 "layer",
@@ -95,6 +102,7 @@ class TestNodePopulation:
                 "y",
                 "z",
                 "@dynamics:holding_current",
+                "@dynamics:input_resistance",
             ],
         ).sort_index()
 
@@ -108,6 +116,7 @@ class TestNodePopulation:
                 "Z",
                 "MORPHOLOGY",
                 "HOLDING_CURRENT",
+                "INPUT_RESISTANCE",
                 "ROTATION_ANGLE_X",
                 "ROTATION_ANGLE_Y",
                 "ROTATION_ANGLE_Z",
@@ -205,6 +214,8 @@ class TestNodePopulation:
         # same query with a $and operator
         npt.assert_equal(_call({"$and": [{Cell.MTYPE: "L6_Y"}, {Cell.MORPHOLOGY: "morph-B"}]}), [1])
         npt.assert_equal(_call({Cell.MORPHOLOGY: ["morph-A", "morph-B"]}), [0, 1])
+        npt.assert_equal(_call({Cell.MORPHOLOGY: ("morph-A", "morph-B")}), [0, 1])
+        npt.assert_equal(_call({Cell.MORPHOLOGY: map(str, ["morph-A", "morph-B"])}), [0, 1])
         npt.assert_equal(_call({"$and": [{}, {}]}), [0, 1, 2])
         npt.assert_equal(_call({"$and": [{}, {Cell.MORPHOLOGY: "morph-B"}]}), [1])
         # same query with a $or operator
@@ -297,14 +308,17 @@ class TestNodePopulation:
             _call([CircuitNodeId("default", 1), CircuitNodeId("default2", 1), ("default2", 1)])
 
     def test_node_ids_by_filter_complex_query(self):
-        test_obj = create_node_population(str(TEST_DATA_DIR / "nodes.h5"), "default")
+        test_obj = create_node_population(
+            str(TEST_DATA_DIR / "nodes.h5"), "default", node_sets=NodeSets.from_dict({})
+        )
+
         data = pd.DataFrame(
             {
                 Cell.MTYPE: ["L23_MC", "L4_BP", "L6_BP", "L6_BPC"],
             }
         )
-        # replace the data using the __dict__ directly
-        test_obj.__dict__["_data"] = data
+        # populate the cached nodes
+        test_obj.__dict__["_cache"] = data
 
         # only full match is accepted
         npt.assert_equal(
@@ -329,9 +343,16 @@ class TestNodePopulation:
 
     def test_get(self):
         _call = self.test_obj.get
-        assert _call().shape == (3, 12)
+        assert _call().shape == (3, 13)
         assert _call(0, Cell.MTYPE) == "L2_X"
         assert _call(CircuitNodeId("default", 0), Cell.MTYPE) == "L2_X"
+
+        # Unknown property filters
+        assert _call({"no-such-property": "no-value"}, raise_missing_property=False).empty
+        with pytest.raises(BluepySnapError) as e:
+            _call({"no-such-property": "no-value"})
+        assert "Unknown node properties" in e.value.args[0]
+
         assert _call(np.int32(0), Cell.MTYPE) == "L2_X"
         pdt.assert_frame_equal(
             _call([1, 2], properties=[Cell.X, Cell.MTYPE, Cell.HOLDING_CURRENT]),
@@ -341,7 +362,7 @@ class TestNodePopulation:
                     [301.0, "L6_Y", 0.3],
                 ],
                 columns=[Cell.X, Cell.MTYPE, Cell.HOLDING_CURRENT],
-                index=[1, 2],
+                index=pd.Index([1, 2], name="node_ids"),
             ),
         )
 
@@ -357,7 +378,7 @@ class TestNodePopulation:
                     [301.0, "L6_Y", 0.3],
                 ],
                 columns=[Cell.X, Cell.MTYPE, Cell.HOLDING_CURRENT],
-                index=[1, 2],
+                index=pd.Index([1, 2], name="node_ids"),
             ),
         )
 
@@ -373,7 +394,7 @@ class TestNodePopulation:
                     [301.0, "L6_Y", 0.3],
                 ],
                 columns=[Cell.X, Cell.MTYPE, Cell.HOLDING_CURRENT],
-                index=[1, 2],
+                index=pd.Index([1, 2], name="node_ids"),
             ),
         )
 
@@ -385,7 +406,7 @@ class TestNodePopulation:
                     [301.0, "L6_Y", 6],
                 ],
                 columns=[Cell.X, Cell.MTYPE, Cell.LAYER],
-                index=[1, 2],
+                index=pd.Index([1, 2], name="node_ids"),
             ),
         )
 
@@ -406,7 +427,7 @@ class TestNodePopulation:
         )
         assert test_obj.property_names == {"categorical", "string", "int", "float"}
         res = test_obj.get(properties=["categorical", "string", "int", "float"])
-        assert is_categorical_dtype(res["categorical"])
+        assert isinstance(res["categorical"].dtype, pd.CategoricalDtype)
         assert res["categorical"].tolist() == ["A", "A", "B", "A", "A", "A", "A"]
         assert res["categorical"].cat.categories.tolist() == ["A", "B", "C"]
         assert res["categorical"].cat.codes.tolist() == [0, 0, 1, 0, 0, 0, 0]
@@ -420,7 +441,7 @@ class TestNodePopulation:
         )
         assert test_obj.property_names == {"categorical", "string", "int", "float"}
         res = test_obj.get(properties=["categorical", "string", "int", "float"])
-        assert not is_categorical_dtype(res["categorical"])
+        assert not isinstance(res["categorical"].dtype, pd.CategoricalDtype)
         assert res["categorical"].tolist() == ["A", "A", "B", "A"]
         assert res["string"].tolist() == ["AA", "BB", "CC", "DD"]
         assert res["int"].tolist() == [0, 0, 1, 0]
@@ -438,7 +459,7 @@ class TestNodePopulation:
                     [301.0, 302.0, 303.0],
                     [101.0, 102.0, 103.0],
                 ],
-                index=[2, 0],
+                index=pd.Index([2, 0], name="node_ids"),
                 columns=[Cell.X, Cell.Y, Cell.Z],
             ),
         )
@@ -484,7 +505,7 @@ class TestNodePopulation:
                         ]
                     ),
                 ],
-                index=[2, 0, 1],
+                index=pd.Index([2, 0, 1], name="node_ids"),
                 name="orientation",
             ),
         )
@@ -519,7 +540,11 @@ class TestNodePopulation:
 
         pdt.assert_series_equal(
             _call_no_rot([2, 0, 1]),
-            pd.Series([np.eye(3), np.eye(3), np.eye(3)], index=[2, 0, 1], name="orientation"),
+            pd.Series(
+                [np.eye(3), np.eye(3), np.eye(3)],
+                index=pd.Index([2, 0, 1], name="node_ids"),
+                name="orientation",
+            ),
         )
 
         # NodePopulation with quaternions
@@ -567,7 +592,7 @@ class TestNodePopulation:
                         ]
                     ),
                 ],
-                index=[2, 0, 1],
+                index=pd.Index([2, 0, 1], name="node_ids"),
                 name="orientation",
             ),
         )
@@ -633,8 +658,60 @@ class TestNodePopulation:
         with open(pickle_path, "rb") as fd:
             test_obj = pickle.load(fd)
 
-        assert pickle_path.stat().st_size <= 200
+        assert pickle_path.stat().st_size < 130 + PICKLED_SIZE_ADJUSTMENT
         assert test_obj.size == 3
+
+    def test_filter_properties(self):
+        assert self.test_obj._ordered_property_names == [
+            "layer",
+            "model_template",
+            "model_type",
+            "morphology",
+            "mtype",
+            "rotation_angle_xaxis",
+            "rotation_angle_yaxis",
+            "rotation_angle_zaxis",
+            "x",
+            "y",
+            "z",
+            "@dynamics:holding_current",
+            "@dynamics:input_resistance",
+        ]
+        existing = ["morphology", "mtype", "y"]
+        desired = {"@dynamics:holding_current", "z", "x", "y", "model_type", "layer", "mtype"}
+
+        result = self.test_obj._iter_selected_properties(existing=existing, desired=desired)
+
+        expected = [
+            (0, "layer"),
+            (0, "model_type"),
+            (2, "x"),
+            (3, "z"),
+            (3, "@dynamics:holding_current"),
+        ]
+        for actual_item, expected_item in itertools.zip_longest(result, expected):
+            assert actual_item == expected_item
+
+    def test_get_values_from_sonata(self):
+        nodes = self.test_obj.to_libsonata
+
+        # valid attributes
+        result = self.test_obj._get_values_from_sonata(nodes, "mtype", [0, 1])
+        assert_array_equal_strict(result, np.array(["L2_X", "L6_Y"], dtype=object))
+
+        # dynamics attribute
+        result = self.test_obj._get_values_from_sonata(nodes, "@dynamics:holding_current", [2])
+        assert_array_equal_strict(result, np.array([0.3], dtype=float))
+
+        # empty selection
+        result = self.test_obj._get_values_from_sonata(nodes, "x", [])
+        assert_array_equal_strict(result, np.array([], dtype=float))
+
+        # unknown attribute
+        with pytest.raises(
+            BluepySnapError, match="Attribute not found in population default: unknown"
+        ):
+            self.test_obj._get_values_from_sonata(nodes, "unknown", [2])
 
 
 class TestNodePopulationSpatialIndex:

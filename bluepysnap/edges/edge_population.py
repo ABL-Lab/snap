@@ -26,10 +26,10 @@ from cached_property import cached_property
 from more_itertools import first
 
 from bluepysnap import query, utils
-from bluepysnap.circuit_ids import CircuitEdgeId, CircuitEdgeIds
+from bluepysnap.circuit_ids import CircuitEdgeIds, CircuitNodeId
+from bluepysnap.circuit_ids_types import IDS_DTYPE, CircuitEdgeId
 from bluepysnap.exceptions import BluepySnapError
 from bluepysnap.sonata_constants import DYNAMICS_PREFIX, ConstContainer, Edge
-from bluepysnap.utils import IDS_DTYPE, Deprecate
 
 
 def _is_empty(xs):
@@ -60,12 +60,17 @@ class EdgePopulation:
         self._circuit = circuit
         self.name = population_name
 
-    @property
+    @cached_property
     def _properties(self):
+        """Edge population properties."""
         return self._circuit.to_libsonata.edge_population_properties(self.name)
 
     @property
     def _population(self):
+        """Libsonata edge population.
+
+        Not cached because it would keep the hdf5 file open.
+        """
         return self._circuit.to_libsonata.edge_population(self.name)
 
     @staticmethod
@@ -116,7 +121,8 @@ class EdgePopulation:
     def config(self):
         """Access the configuration for the population.
 
-        This configuration is extended with
+        This configuration is extended with:
+
         * 'components' of the circuit config
         * 'edges_file': the path the h5 file containing the population.
         """
@@ -149,7 +155,7 @@ class EdgePopulation:
 
         Returns:
             list: A list of strings corresponding to the properties that you can use from the
-                container class
+            container class
 
         Examples:
             >>> from bluepysnap.sonata_constants import Edge
@@ -180,10 +186,6 @@ class EdgePopulation:
         """Get an array of edge IDs or DataFrame with edge properties."""
         edge_ids = utils.ensure_ids(selection.flatten())
         if properties is None:
-            Deprecate.warn(
-                "Returning ids with get/properties is deprecated and will be removed in 1.0.0. "
-                "Please use EdgePopulation.ids instead."
-            )
             return edge_ids
 
         if utils.is_iterable(properties):
@@ -239,6 +241,7 @@ class EdgePopulation:
         Args:
             group (None/int/CircuitEdgeId/CircuitEdgeIds/sequence): Which IDs will be
                 returned depends on the type of the ``group`` argument:
+
                 - ``None``: return all IDs.
                 - ``int``, ``CircuitEdgeId``: return a single edge ID.
                 - ``CircuitEdgeIds`` return IDs of edges the edge population in an array.
@@ -294,8 +297,8 @@ class EdgePopulation:
 
         Returns:
             pandas.Series/pandas.DataFrame:
-                A pandas Series indexed by edge IDs if ``properties`` is scalar.
-                A pandas DataFrame indexed by edge IDs if ``properties`` is list.
+                - A pandas Series indexed by edge IDs if ``properties`` is scalar.
+                - A pandas DataFrame indexed by edge IDs if ``properties`` is list.
 
         Notes:
             The EdgePopulation.property_names function will give you all the usable properties
@@ -304,16 +307,6 @@ class EdgePopulation:
         edge_ids = self.ids(edge_ids)
         selection = libsonata.Selection(edge_ids)
         return self._get(selection, properties)
-
-    def properties(self, edge_ids, properties):
-        """Doc is overridden below."""
-        Deprecate.warn(
-            "EdgePopulation.properties function is deprecated and will be removed in 1.0.0. "
-            "Please use EdgePopulation.get instead."
-        )
-        return self.get(edge_ids, properties)
-
-    properties.__doc__ = get.__doc__
 
     def positions(self, edge_ids, side, kind):
         """Edge positions as a pandas DataFrame.
@@ -389,9 +382,9 @@ class EdgePopulation:
             properties: None / edge property name / list of edge property names
 
         Returns:
-            List of edge IDs, if ``properties`` is None;
-            Pandas Series indexed by edge IDs if ``properties`` is string;
-            Pandas DataFrame indexed by edge IDs if ``properties`` is list.
+            - List of edge IDs, if ``properties`` is None;
+            - Pandas Series indexed by edge IDs if ``properties`` is string;
+            - Pandas DataFrame indexed by edge IDs if ``properties`` is list.
         """
         if source is None and target is None:
             raise BluepySnapError("Either `source` or `target` should be specified")
@@ -419,9 +412,9 @@ class EdgePopulation:
 
         Returns:
             pandas.Series/pandas.DataFrame/list:
-                A pandas Series indexed by edge ID if ``properties`` is a string.
-                A pandas DataFrame indexed by edge ID if ``properties`` is a list.
-                A list of edge IDs, if ``properties`` is None.
+                - A pandas Series indexed by edge ID if ``properties`` is a string.
+                - A pandas DataFrame indexed by edge ID if ``properties`` is a list.
+                - A list of edge IDs, if ``properties`` is None.
         """
         return self.pathway_edges(source=None, target=node_id, properties=properties)
 
@@ -433,9 +426,9 @@ class EdgePopulation:
             properties: None / edge property name / list of edge property names
 
         Returns:
-            List of edge IDs, if ``properties`` is None;
-            Pandas Series indexed by edge IDs if ``properties`` is string;
-            Pandas DataFrame indexed by edge IDs if ``properties`` is list.
+            - List of edge IDs, if ``properties`` is None;
+            - Pandas Series indexed by edge IDs if ``properties`` is string;
+            - Pandas DataFrame indexed by edge IDs if ``properties`` is list.
         """
         return self.pathway_edges(source=node_id, target=None, properties=properties)
 
@@ -448,9 +441,9 @@ class EdgePopulation:
             properties: None / edge property name / list of edge property names
 
         Returns:
-            List of edge IDs, if ``properties`` is None;
-            Pandas Series indexed by edge IDs if ``properties`` is string;
-            Pandas DataFrame indexed by edge IDs if ``properties`` is list.
+            - List of edge IDs, if ``properties`` is None;
+            - Pandas Series indexed by edge IDs if ``properties`` is string;
+            - Pandas DataFrame indexed by edge IDs if ``properties`` is list.
         """
         return self.pathway_edges(
             source=source_node_id, target=target_node_id, properties=properties
@@ -525,6 +518,41 @@ class EdgePopulation:
                     secondary_node_ids_used.add(conn_node_id)
                     break
 
+    def _add_circuit_ids(self, its):
+        """Completes the CircuitNodeId."""
+
+        return (
+            (
+                CircuitNodeId(self.source.name, source_id),
+                CircuitNodeId(self.target.name, target_id),
+                count,
+            )
+            for source_id, target_id, count in its
+        )
+
+    def _add_edge_ids(self, its):
+        """Completes the CircuitNodeId and adds the CircuitEdgeIds."""
+
+        return (
+            (
+                CircuitNodeId(self.source.name, source_id),
+                CircuitNodeId(self.target.name, target_id),
+                CircuitEdgeIds.from_dict({self.name: self.pair_edges(source_id, target_id)}),
+            )
+            for source_id, target_id, _ in its
+        )
+
+    def _omit_edge_count(self, its):
+        """Completes the CircuitNodeId and removes the edge count."""
+
+        return (
+            (
+                CircuitNodeId(self.source.name, source_id),
+                CircuitNodeId(self.target.name, target_id),
+            )
+            for source_id, target_id, _ in its
+        )
+
     def iter_connections(
         self,
         source=None,
@@ -549,9 +577,9 @@ class EdgePopulation:
         ``return_edge_count`` and ``return_edge_ids`` are mutually exclusive.
 
         Yields:
-            (source_node_id, target_node_id, edge_ids) if return_edge_ids == True;
-            (source_node_id, target_node_id, edge_count) if return_edge_count == True;
-            (source_node_id, target_node_id) otherwise.
+            - (source_node_id, target_node_id, edge_ids) if ``return_edge_ids`` is True;
+            - (source_node_id, target_node_id, edge_count) if ``return_edge_count`` is True;
+            - (source_node_id, target_node_id) otherwise.
         """
         if return_edge_ids and return_edge_count:
             raise BluepySnapError(
@@ -564,13 +592,11 @@ class EdgePopulation:
         it = self._iter_connections(source_node_ids, target_node_ids, unique_node_ids, shuffle)
 
         if return_edge_count:
-            return it
+            return self._add_circuit_ids(it)
         elif return_edge_ids:
-            add_edge_ids = lambda x: (x[0], x[1], self.pair_edges(x[0], x[1]))
-            return map(add_edge_ids, it)
+            return self._add_edge_ids(it)
         else:
-            omit_edge_count = lambda x: x[:2]
-            return map(omit_edge_count, it)
+            return self._omit_edge_count(it)
 
     @property
     def h5_filepath(self):
@@ -590,10 +616,10 @@ class EdgePopulation:
                 )
             ) from e
 
-        properties = self._circuit.to_libsonata.edge_population_properties(self.name)
-        if not properties.spatial_synapse_index_dir:
+        index_dir = self._properties.spatial_synapse_index_dir
+        if not index_dir:
             raise BluepySnapError(f"It appears {self.name} does not have synapse indices")
-        return open_index(properties.spatial_synapse_index_dir)
+        return open_index(index_dir)
 
     def __getstate__(self):
         """Make EdgePopulation pickle-able, without storing state of caches."""

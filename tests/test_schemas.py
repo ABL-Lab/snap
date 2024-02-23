@@ -1,13 +1,11 @@
-import re
 from collections.abc import Iterable
-from pathlib import Path
 
 import h5py
 import numpy as np
 import pytest
 
 import bluepysnap.schemas.schemas as test_module
-from bluepysnap.circuit_validation import Error
+from bluepysnap.exceptions import BluepySnapValidationError
 
 from utils import TEST_DATA_DIR, copy_test_data, edit_config
 
@@ -187,8 +185,8 @@ def test_validate_config_ok_missing_optional_fields(to_remove):
             [["networks", "edges", 0, "populations"]],
             "networks.edges[0]: 'populations' is a required property",
         ),
-        ([["networks", "nodes", 0]], "networks.nodes: [] is too short"),
-        ([["networks", "edges", 0]], "networks.edges: [] is too short"),
+        ([["networks", "nodes", 0]], "networks.nodes: [] should be non-empty"),
+        ([["networks", "edges", 0]], "networks.edges: [] should be non-empty"),
         ([["networks", "nodes"]], "networks: 'nodes' is a required property"),
         ([["networks", "edges"]], "networks: 'edges' is a required property"),
         ([["networks"]], "'networks' is a required property"),
@@ -205,7 +203,7 @@ def test_validate_config_error(to_remove_list, expected):
         errors = test_module.validate_circuit_schema(str(config_copy_path), config)
 
         assert len(errors) == 1
-        assert errors[0] == Error(Error.FATAL, f"{config_copy_path}:\n\t{expected}")
+        assert errors[0] == BluepySnapValidationError.fatal(f"{config_copy_path}:\n\t{expected}")
 
 
 def test_validate_nodes_ok():
@@ -248,7 +246,7 @@ def test_validate_edges_ok():
     ),
 )
 def test_validate_nodes_biophysical_missing_required(missing):
-    with copy_test_data() as (circuit_copy_path, config_copy_path):
+    with copy_test_data() as (circuit_copy_path, _):
         nodes_file = circuit_copy_path / "nodes_single_pop.h5"
         with h5py.File(nodes_file, "r+") as h5f:
             del h5f[missing]
@@ -299,7 +297,7 @@ def test_validate_nodes_biophysical_missing_required(missing):
     ),
 )
 def test_validate_edges_chemical_missing_required(missing):
-    with copy_test_data() as (circuit_copy_path, config_copy_path):
+    with copy_test_data() as (circuit_copy_path, _):
         edges_file = circuit_copy_path / "edges_single_pop.h5"
         with h5py.File(edges_file, "r+") as h5f:
             del h5f[missing]
@@ -315,7 +313,9 @@ def test_missing_edge_population():
             del h5f["edges/default"]
         errors = test_module.validate_edges_schema(str(edges_file), "chemical", virtual=False)
         assert len(errors) == 1
-        assert errors[0] == Error(Error.FATAL, f"{str(edges_file)}:\n\tedges: too few properties")
+        assert errors[0] == BluepySnapValidationError.fatal(
+            f"{str(edges_file)}:\n\tedges: too few properties"
+        )
 
 
 def test_missing_node_population():
@@ -325,7 +325,9 @@ def test_missing_node_population():
             del h5f["nodes/default"]
         errors = test_module.validate_nodes_schema(str(nodes_file), "biophysical")
         assert len(errors) == 1
-        assert errors[0] == Error(Error.FATAL, f"{str(nodes_file)}:\n\tnodes: too few properties")
+        assert errors[0] == BluepySnapValidationError.fatal(
+            f"{str(nodes_file)}:\n\tnodes: too few properties"
+        )
 
 
 def test_2_edge_populations():
@@ -390,7 +392,7 @@ def test_virtual_node_population_error():
 
 def test_validate_edges_missing_attributes_field():
     # has no attributes at all
-    with copy_test_data() as (circuit_copy_path, config_copy_path):
+    with copy_test_data() as (circuit_copy_path, _):
         edges_file = circuit_copy_path / "edges_single_pop.h5"
         with h5py.File(edges_file, "r+") as h5f:
             del h5f["edges/default/source_node_id"].attrs["node_population"]
@@ -401,7 +403,7 @@ def test_validate_edges_missing_attributes_field():
 
 def test_validate_edges_missing_attribute():
     # has attributes but not the required ones
-    with copy_test_data() as (circuit_copy_path, config_copy_path):
+    with copy_test_data() as (circuit_copy_path, _):
         edges_file = circuit_copy_path / "edges_single_pop.h5"
         with h5py.File(edges_file, "r+") as h5f:
             del h5f["edges/default/source_node_id"].attrs["node_population"]
@@ -421,19 +423,26 @@ def test_validate_edges_missing_attribute():
     ),
 )
 def test_wrong_datatype(field):
-    with copy_test_data() as (circuit_copy_path, config_copy_path):
+    with copy_test_data() as (circuit_copy_path, _):
         edges_file = circuit_copy_path / "edges_single_pop.h5"
         with h5py.File(edges_file, "r+") as h5f:
             del h5f[field]
             h5f.create_dataset(field, data=[0], dtype="i2")
         errors = test_module.validate_edges_schema(str(edges_file), "chemical", virtual=False)
         assert len(errors) == 1
-        assert errors[0].level == Error.WARNING
+        assert errors[0].level == BluepySnapValidationError.WARNING
         assert f"incorrect datatype 'int16' for '{field}'" in errors[0].message
 
 
+def test__get_reference_resolver():
+    expected = {"const": "test_value"}
+    schema = {"$mock_reference": expected}
+    resolver = test_module._get_reference_resolver(schema)
+    assert resolver.resolve("#/$mock_reference")[1] == expected
+
+
 def test_nodes_schema_types():
-    property_types, dynamics_params = test_module.nodes_schema_types("biophysical")
+    property_types, _ = test_module.nodes_schema_types("biophysical")
     assert "x" in property_types
     assert property_types["x"] == np.float32
 
