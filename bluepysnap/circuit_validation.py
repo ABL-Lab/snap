@@ -4,6 +4,7 @@ The idea here is to not depend on libsonata if possible, so we can use this in a
 """
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 
 import h5py
@@ -19,6 +20,13 @@ from bluepysnap.utils import load_json, print_validation_errors
 
 L = logging.getLogger("brainbuilder")
 MAX_MISSING_FILES_DISPLAY = 10
+
+
+@contextmanager
+def _np_printoptions():
+    """Get numpy print options."""
+    with np.printoptions(legacy=("1.25" if np.version.version >= "2.0.0" else None)):
+        yield
 
 
 def _check_partial_circuit_config(config):
@@ -347,11 +355,12 @@ def _check_edges_node_ids(nodes_ds, nodes):
         if node_ids.size > 0:
             missing_ids = sorted(set(nodes_ds[:]) - set(node_ids))
             if missing_ids:
-                errors.append(
-                    BluepySnapValidationError.fatal(
-                        f"{nodes_ds.name} misses node ids in its node population: {missing_ids}"
+                with _np_printoptions():
+                    errors.append(
+                        BluepySnapValidationError.fatal(
+                            f"{nodes_ds.name} misses node ids in its node population: {missing_ids}"
+                        )
                     )
-                )
         elif f"nodes/{node_population_name}" in h5f:
             errors.append(
                 BluepySnapValidationError.fatal(
@@ -386,12 +395,13 @@ def _check_edges_indices(population):
                 edges_range = node_to_edges_ranges[nodes_range[0] : nodes_range[1]][0]
                 edge_node_ids = list(set(nodes_ds[edges_range[0] : edges_range[1]]))
                 if len(edge_node_ids) > 1 or edge_node_ids[0] != node_id:
-                    errors.append(
-                        BluepySnapValidationError.fatal(
-                            f"Population {population.file.filename} edges {edge_node_ids} have "
-                            f"node ids {edges_range} instead of single id {node_id}"
+                    with _np_printoptions():
+                        errors.append(
+                            BluepySnapValidationError.fatal(
+                                f"Population {population.file.filename} edges {edge_node_ids} have "
+                                f"node ids {edges_range} instead of single id {node_id}"
+                            )
                         )
-                    )
 
     errors = []
     indices = population["indices"]
@@ -481,7 +491,7 @@ def validate_edge_population(edges_file, name, nodes):
     return []
 
 
-def validate_edges_dict(edges_dict, nodes, skip_slow):
+def validate_edges_dict(edges_dict, nodes, skip_slow, ignore_datatype_errors):
     """Validate an item in the "edges" list.
 
     Args:
@@ -518,7 +528,9 @@ def validate_edges_dict(edges_dict, nodes, skip_slow):
             virtual = False
             if pop_type == "chemical":
                 virtual = _is_source_node_virtual(edges_dict, name, nodes)
-            errors += schemas.validate_edges_schema(edges_file, pop_type, virtual)
+            errors += schemas.validate_edges_schema(
+                edges_file, pop_type, virtual, ignore_datatype_errors
+            )
             if not skip_slow:
                 errors += validate_edge_population(edges_file, name, nodes)
         else:
@@ -527,7 +539,7 @@ def validate_edges_dict(edges_dict, nodes, skip_slow):
     return errors
 
 
-def validate_nodes_dict(nodes_dict, components):
+def validate_nodes_dict(nodes_dict, components, ignore_datatype_errors):
     """Validate an item in the "nodes" list.
 
     Args:
@@ -544,7 +556,9 @@ def validate_nodes_dict(nodes_dict, components):
         nodes_file = nodes_dict["nodes_file"]
 
         if Path(nodes_file).is_file():
-            errors = schemas.validate_nodes_schema(nodes_file, population["type"])
+            errors = schemas.validate_nodes_schema(
+                nodes_file, population["type"], ignore_datatype_errors
+            )
             errors += validate_node_population(nodes_file, population, pop_name)
         else:
             errors.append(BluepySnapValidationError.fatal(f'Invalid "nodes_file": {nodes_file}'))
@@ -552,7 +566,7 @@ def validate_nodes_dict(nodes_dict, components):
     return errors
 
 
-def validate_networks(config, skip_slow):
+def validate_networks(config, skip_slow, ignore_datatype_errors):
     """Validate "networks" part of the config.
 
     Acts as a starting point of validation.
@@ -566,15 +580,17 @@ def validate_networks(config, skip_slow):
 
     for nodes_dict in nodes:
         if "nodes_file" in nodes_dict:
-            errors += validate_nodes_dict(nodes_dict, components)
+            errors += validate_nodes_dict(nodes_dict, components, ignore_datatype_errors)
     for edges_dict in config["networks"].get("edges", []):
         if "edges_file" in edges_dict:
-            errors += validate_edges_dict(edges_dict, nodes, skip_slow)
+            errors += validate_edges_dict(edges_dict, nodes, skip_slow, ignore_datatype_errors)
 
     return errors
 
 
-def validate(config_file, skip_slow, only_errors=False, print_errors=True):
+def validate(
+    config_file, skip_slow, only_errors=False, print_errors=True, ignore_datatype_errors=False
+):
     """Validates Sonata circuit.
 
     Args:
@@ -587,10 +603,10 @@ def validate(config_file, skip_slow, only_errors=False, print_errors=True):
         set: set of errors, empty if no errors
     """
     config = Parser.parse(load_json(config_file), str(Path(config_file).parent))
-    errors = schemas.validate_circuit_schema(config_file, config)
+    errors = schemas.validate_circuit_schema(config_file, config, ignore_datatype_errors)
 
     if "networks" in config:
-        errors += validate_networks(config, skip_slow)
+        errors += validate_networks(config, skip_slow, ignore_datatype_errors)
 
     if _check_partial_circuit_config(config):
         message = (

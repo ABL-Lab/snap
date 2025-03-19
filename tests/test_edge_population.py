@@ -14,6 +14,7 @@ from bluepysnap.bbp import Synapse
 from bluepysnap.circuit import Circuit
 from bluepysnap.circuit_ids import CircuitEdgeIds, CircuitNodeIds
 from bluepysnap.circuit_ids_types import IDS_DTYPE, CircuitEdgeId, CircuitNodeId
+from bluepysnap.edges.edge_population_stats import StatsHelper
 from bluepysnap.exceptions import BluepySnapError
 from bluepysnap.sonata_constants import DEFAULT_EDGE_TYPE, Edge
 
@@ -41,6 +42,7 @@ class TestEdgePopulation:
         assert self.test_obj.source.name == "default"
         assert self.test_obj.target.name == "default"
         assert self.test_obj.size, 4
+        assert isinstance(self.test_obj.stats, StatsHelper)
         assert sorted(self.test_obj.property_names) == sorted(
             [
                 Synapse.SOURCE_NODE_ID,
@@ -726,27 +728,10 @@ class TestEdgePopulation:
     def test_h5_filepath_from_config(self):
         assert self.test_obj.h5_filepath == str(TEST_DATA_DIR / "edges.h5")
 
-    @pytest.mark.skip(reason="Until spatial-index is released publicly")
-    def test_spatial_synapse_index(self):
-        with mock.patch("spatial_index.open_index") as mock_open_index:
-            self.test_obj.spatial_synapse_index
-        mock_open_index.assert_called_once_with("path/to/edge/dir")
-
-    @mock.patch.dict(sys.modules, {"spatial_index": mock.Mock()})
     def test_spatial_synapse_index_call(self):
         with pytest.raises(
             BluepySnapError,
             match="It appears default does not have synapse indices",
-        ):
-            self.test_obj.spatial_synapse_index
-
-    def test_spatial_synapse_index_error(self):
-        with pytest.raises(
-            BluepySnapError,
-            match=(
-                "Spatial index is for now only available internally to BBP. "
-                "It requires `spatial_index`, an internal package."
-            ),
         ):
             self.test_obj.spatial_synapse_index
 
@@ -774,9 +759,9 @@ class TestEdgePopulationSpatialIndex:
             TEST_DATA_DIR / "circuit_config.json", "default2"
         )
 
-    @mock.patch.dict(sys.modules, {"spatial_index": mock.Mock()})
+    @mock.patch.dict(sys.modules, {"brain_indexer": mock.Mock()})
     def test_spatial_synapse_index_call(self):
         self.test_obj.spatial_synapse_index
-        mock = sys.modules["spatial_index"].open_index
+        mock = sys.modules["brain_indexer"].open_index
         assert mock.call_count == 1
         assert mock.call_args[0][0].endswith("path/to/edge/dir")

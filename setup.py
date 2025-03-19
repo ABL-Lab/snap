@@ -43,12 +43,13 @@ setup(
     name="bluepysnap",
     python_requires=">=3.8",
     install_requires=[
+        "brain-indexer>=3.0.0",
         "cached_property>=1.0",
         "h5py>=3.0.1,<4.0.0",
         "importlib_resources>=5.0.0",
         "jsonschema>=4.0.0,<5.0.0",
         "libsonata>=0.1.24,<1.0.0",
-        "morphio>=3.0.0,<4.0.0",
+        "morphio>=3.3.5,<4.0.0",
         "morph-tool>=2.4.3,<3.0.0",
         "numpy>=1.8",
         "pandas>=1.0.0",
@@ -58,7 +59,6 @@ setup(
     extras_require={
         "docs": ["sphinx", "sphinx-bluebrain-theme"],
         "plots": ["matplotlib>=3.0.0"],
-        "spatial-index": ["spatial-index>=1.2.1"],
     },
     packages=find_packages(),
     package_data={

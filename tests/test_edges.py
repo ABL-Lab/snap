@@ -13,7 +13,7 @@ from bluepysnap.circuit_ids import CircuitEdgeIds, CircuitNodeIds
 from bluepysnap.circuit_ids_types import IDS_DTYPE, CircuitEdgeId, CircuitNodeId
 from bluepysnap.exceptions import BluepySnapError
 
-from utils import PICKLED_SIZE_ADJUSTMENT, TEST_DATA_DIR
+from utils import PICKLED_SIZE_ADJUSTMENT, TEST_DATA_DIR, copy_test_data, edit_config
 
 
 class TestEdges:
@@ -181,6 +181,31 @@ class TestEdges:
         expected = CircuitEdgeIds.from_dict({"default": [1, 2, 3], "default2": [1, 2, 3]})
         assert tested == expected
 
+        # Test querying with the population type
+        with copy_test_data() as (_, config_path):
+            with edit_config(config_path) as config:
+                config["networks"]["edges"][0]["populations"]["default"]["type"] = "electrical"
+
+            circuit = Circuit(config_path)
+
+            tested = circuit.edges.ids({"population_type": "electrical"})
+            expected = CircuitEdgeIds.from_arrays(4 * ["default"], [0, 1, 2, 3])
+            assert tested == expected
+
+            tested = circuit.edges.ids({"population_type": "chemical"})
+            expected = CircuitEdgeIds.from_arrays(4 * ["default2"], [0, 1, 2, 3])
+            assert tested == expected
+
+            tested = circuit.edges.ids(
+                {"population_type": ["electrical", "chemical"], "node_id": [0]}
+            )
+            expected = CircuitEdgeIds.from_tuples([("default", 0), ("default2", 0)])
+            assert tested == expected
+
+            tested = circuit.edges.ids({"population_type": "fake"})
+            expected = CircuitEdgeIds.from_arrays([], [])
+            assert tested == expected
+
     def test_get(self):
         with pytest.raises(BluepySnapError, match="You need to set edge_ids in get."):
             self.test_obj.get(properties=["other2"])
@@ -208,9 +233,9 @@ class TestEdges:
         tested = self.test_obj.get(ids, properties=["other2", "other1", "@source_node"])
         expected = pd.DataFrame(
             {
-                "other2": np.array([np.NaN, np.NaN, np.NaN, np.NaN, 10, 11, 12, 13], dtype=float),
+                "other2": np.array([np.nan, np.nan, np.nan, np.nan, 10, 11, 12, 13], dtype=float),
                 "other1": np.array(
-                    [np.NaN, np.NaN, np.NaN, np.NaN, "A", "B", "C", "D"], dtype=object
+                    [np.nan, np.nan, np.nan, np.nan, "A", "B", "C", "D"], dtype=object
                 ),
                 "@source_node": np.array([2, 0, 0, 2, 2, 0, 0, 2], dtype=int),
             },
@@ -304,7 +329,7 @@ class TestEdges:
         tested = self.test_obj.get(ids, properties="other2")
         expected = pd.DataFrame(
             {
-                "other2": np.array([np.NaN, np.NaN, np.NaN, np.NaN, 10, 11, 12, 13], dtype=float),
+                "other2": np.array([np.nan, np.nan, np.nan, np.nan, 10, 11, 12, 13], dtype=float),
             },
             index=pd.MultiIndex.from_tuples(
                 [

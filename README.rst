@@ -1,3 +1,7 @@
+.. warning::
+   The Blue Brain Project concluded in December 2024, so development has ceased under the BlueBrain GitHub organization.
+   Future development will take place at: https://github.com/openbraininstitute/snap
+
 |banner|
 
 |build_status| |license| |coverage| |docs| |DOI|
@@ -19,6 +23,8 @@ Blue Brain SNAP can be installed using ``pip``::
 
 Usage
 -----
+
+For a full in-depth usage quide, there's a series of jupyter notebooks available in `doc/source/notebooks <doc/source/notebooks/>`_ subfolder.
 
 There are two main interface classes provided by Blue Brain SNAP:
 

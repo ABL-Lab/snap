@@ -28,6 +28,7 @@ from more_itertools import first
 from bluepysnap import query, utils
 from bluepysnap.circuit_ids import CircuitEdgeIds, CircuitNodeId
 from bluepysnap.circuit_ids_types import IDS_DTYPE, CircuitEdgeId
+from bluepysnap.edges.edge_population_stats import StatsHelper
 from bluepysnap.exceptions import BluepySnapError
 from bluepysnap.sonata_constants import DYNAMICS_PREFIX, ConstContainer, Edge
 
@@ -147,6 +148,11 @@ class EdgePopulation:
         """
         return self.get([0], list(self.property_names)).dtypes.sort_index()
 
+    @cached_property
+    def stats(self):
+        """Access edge population stats methods."""
+        return StatsHelper(self)
+
     def container_property_names(self, container):
         """Lists the ConstContainer properties shared with the EdgePopulation.
 
@@ -232,7 +238,7 @@ class EdgePopulation:
         chunk_size = int(1e8)
         for chunk in np.array_split(ids, 1 + len(ids) // chunk_size):
             data = self.get(chunk, properties - unknown_props)
-            res.extend(chunk[query.resolve_ids(data, self.name, queries)])
+            res.extend(chunk[query.resolve_ids(data, self.name, self.type, queries)])
         return np.array(res, dtype=IDS_DTYPE)
 
     def ids(self, group=None, limit=None, sample=None, raise_missing_property=True):
@@ -288,7 +294,7 @@ class EdgePopulation:
             result = result[:limit]
         return utils.ensure_ids(result)
 
-    def get(self, edge_ids, properties):
+    def get(self, edge_ids, properties=None):
         """Edge properties as pandas DataFrame.
 
         Args:
@@ -500,7 +506,7 @@ class EdgePopulation:
             # np.stack(uint64, int64) -> float64
             connected_node_ids_with_count = connected_node_ids_with_count.astype(np.uint32)
             if secondary_node_ids is not None:
-                mask = np.in1d(
+                mask = np.isin(
                     connected_node_ids_with_count[:, 0], secondary_node_ids, assume_unique=True
                 )
                 connected_node_ids_with_count = connected_node_ids_with_count[mask]
@@ -606,15 +612,7 @@ class EdgePopulation:
     @cached_property
     def spatial_synapse_index(self):
         """Access to edges spatial index."""
-        try:
-            from spatial_index import open_index
-        except ImportError as e:
-            raise BluepySnapError(
-                (
-                    "Spatial index is for now only available internally to BBP. "
-                    "It requires `spatial_index`, an internal package."
-                )
-            ) from e
+        from brain_indexer import open_index
 
         index_dir = self._properties.spatial_synapse_index_dir
         if not index_dir:
